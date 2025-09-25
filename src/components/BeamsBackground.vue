@@ -21,16 +21,16 @@ interface BeamsProps {
 }
 
 const props = withDefaults(defineProps<BeamsProps>(), {
-  beamWidth: 1.6,
-  beamHeight: 18,
-  beamNumber: 18,
-  beamSpacing: 0.4,
+  beamWidth: 1.2,
+  beamHeight: 22,
+  beamNumber: 16,
+  beamSpacing: 0.55,
   lightColor: '#ffffff',
   speed: 2,
-  noiseIntensity: 1.75,
-  scale: 0.16,
-  rotation: 18,
-  tilt: -10
+  noiseIntensity: 1.6,
+  scale: 0.18,
+  rotation: 25,
+  tilt: -12
 });
 
 const containerRef = useTemplateRef<HTMLDivElement>('containerRef');
@@ -213,13 +213,13 @@ function createStackedPlanesBufferGeometry(
   let vertexOffset = 0;
   let indexOffset = 0;
   let uvOffset = 0;
-  const totalWidth = n * width + (n - 1) * spacing;
+  const totalWidth = n * width + Math.max(n - 1, 0) * spacing;
   const xOffsetBase = -totalWidth / 2;
 
   for (let i = 0; i < n; i++) {
     const xOffset = xOffsetBase + i * (width + spacing);
-    const uvXOffset = Math.random() * 300;
-    const uvYOffset = Math.random() * 300;
+    const uvXOffset = Math.random() * 200;
+    const uvYOffset = Math.random() * 200;
 
     for (let j = 0; j <= heightSegments; j++) {
       const y = height * (j / heightSegments - 0.5);
@@ -238,6 +238,7 @@ function createStackedPlanesBufferGeometry(
         indices.set([a, b, c, c, b, d], indexOffset);
         indexOffset += 6;
       }
+
       vertexOffset += 2;
       uvOffset += 4;
     }
@@ -251,12 +252,10 @@ function createStackedPlanesBufferGeometry(
 }
 
 const beamMaterial = computed(() =>
-  extendMaterial(THREE.MeshPhysicalMaterial, {
+  extendMaterial(THREE.MeshStandardMaterial, {
     header: `
   varying vec3 vEye;
-  varying float vNoise;
   varying vec2 vUv;
-  varying vec3 vPosition;
   uniform float time;
   uniform float uSpeed;
   uniform float uNoiseIntensity;
@@ -264,8 +263,7 @@ const beamMaterial = computed(() =>
   ${noise}`,
     vertexHeader: `
   float getPos(vec3 pos) {
-    vec3 noisePos =
-      vec3(pos.x * 0., pos.y - uv.y, pos.z + time * uSpeed * 3.) * uScale;
+    vec3 noisePos = vec3(pos.x * 0., pos.y - uv.y, pos.z + time * uSpeed * 3.) * uScale;
     return cnoise(noisePos);
   }
   vec3 getCurrentPos(vec3 pos) {
@@ -275,8 +273,8 @@ const beamMaterial = computed(() =>
   }
   vec3 getNormal(vec3 pos) {
     vec3 curpos = getCurrentPos(pos);
-    vec3 nextposX = getCurrentPos(pos + vec3(0.01, 0.0, 0.0));
-    vec3 nextposZ = getCurrentPos(pos + vec3(0.0, -0.01, 0.0));
+    vec3 nextposX = getCurrentPos(pos + vec3(0.02, 0.0, 0.0));
+    vec3 nextposZ = getCurrentPos(pos + vec3(0.0, -0.02, 0.0));
     vec3 tangentX = normalize(nextposX - curpos);
     vec3 tangentZ = normalize(nextposZ - curpos);
     return normalize(cross(tangentZ, tangentX));
@@ -287,55 +285,55 @@ const beamMaterial = computed(() =>
       '#include <beginnormal_vertex>': `objectNormal = getNormal(position.xyz);`
     },
     fragment: {
+      '#include <lights_fragment_begin>': `
+    float randomNoise = noise(gl_FragCoord.xy * 0.5);
+    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 0.4, randomNoise * uNoiseIntensity);
+  `,
       '#include <dithering_fragment>': `
-    float randomNoise = noise(gl_FragCoord.xy);
-    gl_FragColor.rgb -= randomNoise / 15. * uNoiseIntensity;`
+    float staticNoise = noise(gl_FragCoord.xy * 0.8);
+    gl_FragColor.rgb -= staticNoise / 18. * uNoiseIntensity;
+  `
     },
     material: { fog: true },
     uniforms: {
-      diffuse: new THREE.Color(...hexToNormalizedRGB('#000000')),
+      diffuse: new THREE.Color(...hexToNormalizedRGB('#060606')),
       time: { shared: true, mixed: true, linked: true, value: 0 },
-      roughness: 0.18,
-      metalness: 0.65,
+      roughness: 0.28,
+      metalness: 0.4,
+      envMapIntensity: 9,
       uSpeed: { shared: true, mixed: true, linked: true, value: props.speed },
-      envMapIntensity: 14,
-      uNoiseIntensity: Math.max(props.noiseIntensity * 0.75, 0.1),
+      uNoiseIntensity: props.noiseIntensity,
       uScale: props.scale
     }
   })
 );
 
 const cleanup = () => {
-  if (animationId) {
+  if (animationId !== null) {
     cancelAnimationFrame(animationId);
     animationId = null;
   }
 
   if (containerRef.value) {
     const container = containerRef.value as HTMLDivElement & { _resizeObserver?: ResizeObserver };
-
     if (container._resizeObserver) {
       container._resizeObserver.disconnect();
       delete container._resizeObserver;
     }
-
     if (renderer && renderer.domElement.parentNode === container) {
       container.removeChild(renderer.domElement);
     }
   }
 
-  if (beamMesh) {
-    beamMesh.geometry?.dispose();
-    beamMesh.material?.dispose();
-    beamMesh = null;
-  }
-
-  group = null;
+  beamMesh?.geometry.dispose?.();
+  beamMesh?.material.dispose?.();
+  beamMesh = null;
 
   renderer?.dispose();
   renderer = null;
   scene = null;
   camera = null;
+  group = null;
   directionalLight = null;
   ambientLight = null;
 };
@@ -347,25 +345,24 @@ const initThreeJS = () => {
 
   const container = containerRef.value;
 
-  renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 3));
-  renderer.setClearColor(0x050505, 1);
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setClearColor(0x060606, 1);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.15;
-  renderer.physicallyCorrectLights = true;
+  renderer.toneMappingExposure = 1.08;
 
   scene = new THREE.Scene();
 
-  camera = new THREE.PerspectiveCamera(30, 1, 0.1, 1000);
-  camera.position.set(0, 0, 28);
+  camera = new THREE.PerspectiveCamera(32, 1, 0.1, 1000);
+  camera.position.set(0, 0, 26);
 
   const geometry = createStackedPlanesBufferGeometry(
     props.beamNumber,
     props.beamWidth,
     props.beamHeight,
     props.beamSpacing,
-    200
+    160
   );
 
   const material = beamMaterial.value;
@@ -376,20 +373,13 @@ const initThreeJS = () => {
   group.add(beamMesh);
   scene.add(group);
 
-  directionalLight = new THREE.DirectionalLight(new THREE.Color(props.lightColor), 1.35);
-  directionalLight.position.set(-5, 6, 16);
-  const shadowCamera = directionalLight.shadow.camera as THREE.OrthographicCamera;
-  shadowCamera.top = 24;
-  shadowCamera.bottom = -24;
-  shadowCamera.left = -24;
-  shadowCamera.right = 24;
-  shadowCamera.far = 64;
-  directionalLight.shadow.bias = -0.004;
+  directionalLight = new THREE.DirectionalLight(new THREE.Color(props.lightColor), 1.2);
+  directionalLight.position.set(-4, 5.5, 15);
   scene.add(directionalLight);
   scene.add(directionalLight.target);
-  directionalLight.target.position.set(3, -1.5, 0);
+  directionalLight.target.position.set(2.2, -1.6, 0);
 
-  ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
+  ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
   scene.add(ambientLight);
 
   container.appendChild(renderer.domElement);
@@ -406,8 +396,8 @@ const initThreeJS = () => {
       1
     );
 
-    const requiredScale = Math.max(viewHeight / baseHeight, viewWidth / totalWidth) * 1.25;
-    const safeScale = Math.max(requiredScale, 1.35);
+    const requiredScale = Math.max(viewHeight / baseHeight, viewWidth / totalWidth) * 1.22;
+    const safeScale = Math.max(requiredScale, 1.25);
     group.scale.setScalar(safeScale);
   };
 
@@ -415,7 +405,7 @@ const initThreeJS = () => {
     if (!container || !renderer || !camera) return;
 
     const width = container.offsetWidth;
-    const height = container.offsetHeight;
+    const height = container.offsetHeight || 1;
 
     renderer.setSize(width, height, false);
     camera.aspect = width / height;
@@ -425,7 +415,6 @@ const initThreeJS = () => {
 
   const resizeObserver = new ResizeObserver(resize);
   resizeObserver.observe(container);
-
   (container as HTMLDivElement & { _resizeObserver?: ResizeObserver })._resizeObserver = resizeObserver;
 
   resize();
@@ -433,28 +422,34 @@ const initThreeJS = () => {
   const animate = () => {
     animationId = requestAnimationFrame(animate);
 
-    if (beamMesh && beamMesh.material) {
-      const uniforms = beamMesh.material.uniforms as typeof beamMesh.material.uniforms & {
-        time?: { value: number };
-      };
-      if (uniforms.time) {
-        uniforms.time.value += 0.1 * 0.016;
-      }
+    const motionUniforms = beamMesh?.material.uniforms as typeof beamMesh.material.uniforms & {
+      time?: { value: number };
+      uSpeed?: { value: number };
+    };
+
+    const speed = motionUniforms?.uSpeed ? motionUniforms.uSpeed.value : props.speed;
+    const clampedSpeed = Math.max(speed, 0.1);
+    const timeScale = 0.36; // global slowdown factor for shader-driven deformation
+
+    if (motionUniforms?.time) {
+      motionUniforms.time.value += 0.016 * clampedSpeed * timeScale;
     }
 
     const now = performance.now() * 0.001;
+    const easedTime = now * Math.max(clampedSpeed * 0.28, 0.14);
+
     if (group) {
-      const wobble = Math.sin(now * 0.6) * THREE.MathUtils.degToRad(1.5);
-      const sweep = Math.cos(now * 0.85) * THREE.MathUtils.degToRad(2.8);
+      const wobble = Math.sin(easedTime * 0.8) * THREE.MathUtils.degToRad(1.1);
+      const sweep = Math.cos(easedTime * 1.15) * THREE.MathUtils.degToRad(2.4);
       group.rotation.x = degToRad(props.tilt) + wobble;
       group.rotation.z = degToRad(props.rotation) + sweep;
     }
 
     if (directionalLight) {
-      directionalLight.position.x = Math.sin(now * 0.45) * 7;
-      directionalLight.position.y = 6 + Math.cos(now * 0.6) * 3.5;
-      directionalLight.position.z = 16 + Math.sin(now * 0.38) * 2;
-      directionalLight.target.position.set(2.5, Math.cos(now * 0.7) * -1.5, 0);
+      directionalLight.position.x = -4 + Math.sin(easedTime * 0.6) * 4.2;
+      directionalLight.position.y = 5.5 + Math.cos(easedTime * 0.75) * 2.1;
+      directionalLight.position.z = 15 + Math.sin(easedTime * 0.5) * 1.8;
+      directionalLight.target.position.set(2.2, Math.cos(easedTime * 0.9) * -1.1, 0);
       directionalLight.target.updateMatrixWorld();
     }
 
